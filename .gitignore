@@ -1,0 +1,26 @@
+# Secrets locaux
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+
+# Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Éditeurs et système
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
