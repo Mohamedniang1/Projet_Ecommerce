@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
@@ -47,3 +47,28 @@ class RegisterSerializer(serializers.ModelSerializer):
             role=User.Role.CLIENT,
             **validated_data,
         )
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+        style={"input_type": "password"},
+    )
+
+    def validate(self, attrs):
+        email = attrs["email"].strip().lower()
+
+        user = authenticate(
+            request=self.context.get("request"),
+            email=email,
+            password=attrs["password"],
+        )
+
+        if user is None:
+            raise serializers.ValidationError(
+                "Adresse e-mail ou mot de passe incorrect."
+            )
+
+        return {"user": user}

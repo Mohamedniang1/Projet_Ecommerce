@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
-
+from .serializers import LoginSerializer
 
 User = get_user_model()
 
@@ -84,3 +84,68 @@ class RegistrationTests(APITestCase):
         self.assertEqual(user.role, User.Role.CLIENT)
         self.assertFalse(user.is_staff)
         self.assertFalse(user.is_superuser)
+
+class LoginSerializerTests(APITestCase):
+    def setUp(self):
+        self.password = "Test-Uniquement!48-Rivage"
+
+        self.user = User.objects.create_user(
+            username="login_test",
+            email="connexion@example.com",
+            password=self.password,
+        )
+
+    def test_valid_credentials_are_accepted(self):
+        serializer = LoginSerializer(data={
+            "email": "connexion@example.com",
+            "password": self.password,
+        })
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["user"],
+            self.user,
+        )
+        self.assertNotIn("password", serializer.validated_data)
+
+    def test_email_is_normalized(self):
+        serializer = LoginSerializer(data={
+            "email": " CONNEXION@EXAMPLE.COM ",
+            "password": self.password,
+        })
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["user"],
+            self.user,
+        )
+
+    def test_wrong_password_is_rejected(self):
+        serializer = LoginSerializer(data={
+            "email": "connexion@example.com",
+            "password": "Mauvais-mot-de-passe!",
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("non_field_errors", serializer.errors)
+
+    def test_unknown_email_is_rejected(self):
+        serializer = LoginSerializer(data={
+            "email": "inconnu@example.com",
+            "password": self.password,
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("non_field_errors", serializer.errors)
+
+    def test_inactive_user_is_rejected(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+
+        serializer = LoginSerializer(data={
+            "email": "connexion@example.com",
+            "password": self.password,
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("non_field_errors", serializer.errors)
