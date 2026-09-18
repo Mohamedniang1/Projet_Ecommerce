@@ -25,5 +25,19 @@ def set_auth_cookies(response, access_token, refresh_token):
         samesite=settings.JWT_COOKIE_SAMESITE,
         path="/api/users/",
     )
+    return response
+
+def clear_auth_cookies(response):
+    response.delete_cookie(
+        key=settings.JWT_ACCESS_COOKIE_NAME,
+        path="/api/",
+        samesite=settings.JWT_COOKIE_SAMESITE,
+    )
+
+    response.delete_cookie(
+        key=settings.JWT_REFRESH_COOKIE_NAME,
+        path="/api/users/",
+        samesite=settings.JWT_COOKIE_SAMESITE,
+    )
 
     return response

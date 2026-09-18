@@ -9,7 +9,12 @@ from .serializers import LoginSerializer
 
 User = get_user_model()
 
-
+# Teste l'endpoint d'inscription (POST /register/).
+# Vérifie qu'un compte est bien créé avec le rôle CLIENT, que le mot de
+# passe est validé et haché, que les emails en double sont rejetés
+# (même avec une casse différente), et surtout qu'un utilisateur ne peut
+# pas s'auto-attribuer des droits admin (role, is_staff, is_superuser)
+# en les envoyant dans la requête.
 class RegistrationTests(APITestCase):
     def setUp(self):
         self.url = reverse("users:register")
@@ -88,6 +93,12 @@ class RegistrationTests(APITestCase):
         self.assertFalse(user.is_staff)
         self.assertFalse(user.is_superuser)
 
+# Teste le LoginSerializer de manière isolée, sans passer par une
+# requête HTTP complète. Vérifie la logique d'authentification pure :
+# identifiants valides acceptés, email normalisé (espaces/casse),
+# mot de passe erroné ou email inconnu rejetés avec un message
+# générique (non_field_errors) pour ne pas révéler quel champ est
+# fautif, et un compte désactivé (is_active=False) bloqué.
 class LoginSerializerTests(APITestCase):
     def setUp(self):
         self.password = "Test-Uniquement!48-Rivage"
@@ -153,6 +164,13 @@ class LoginSerializerTests(APITestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("non_field_errors", serializer.errors)
 
+# Teste le flux complet de connexion par cookies HTTP (POST /login/),
+# avec la vérification CSRF réellement activée (enforce_csrf_checks).
+# Vérifie que les cookies JWT posés sont bien httpOnly, SameSite=Lax,
+# avec un "path" restreint pour le refresh token, que les tokens
+# n'apparaissent jamais dans le corps de la réponse, que /me/ devient
+# accessible juste après connexion, et que la connexion échoue sans
+# token CSRF ou avec un mauvais mot de passe (sans poser de cookies).
 class CookieLoginTests(APITestCase):
     def setUp(self):
         self.client = APIClient(enforce_csrf_checks=True)
@@ -257,3 +275,233 @@ class CookieLoginTests(APITestCase):
             settings.JWT_REFRESH_COOKIE_NAME,
             response.cookies,
         )
+
+
+# Teste l'endpoint de rafraîchissement du token (POST /refresh/), qui
+# permet d'obtenir un nouvel access token sans se reconnecter. Vérifie
+# que le refresh remplace bien les cookies, qu'un ancien refresh token
+# déjà utilisé ne peut pas être rejoué (rotation/blacklist), que le
+# refresh fonctionne même sans cookie d'access token mais échoue sans
+# cookie de refresh token, et que la protection CSRF s'applique aussi
+# ici sans "consommer" le refresh token en cas de tentative refusée.
+class CookieRefreshTests(APITestCase):
+    def setUp(self):
+        self.client = APIClient(enforce_csrf_checks=True)
+
+        self.password = "Test-Uniquement!48-Rivage"
+        self.user = User.objects.create_user(
+            username="refresh_test",
+            email="refresh@example.com",
+            password=self.password,
+        )
+
+        self.refresh_url = reverse("users:refresh")
+
+        csrf_response = self.client.get(reverse("users:csrf"))
+        csrf_token = csrf_response.json()["csrfToken"]
+
+        login_response = self.client.post(
+            reverse("users:login"),
+            {
+                "email": self.user.email,
+                "password": self.password,
+            },
+            format="json",
+            HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+        self.assertEqual(login_response.status_code, 200)
+
+        self.csrf_token = login_response.data["csrfToken"]
+        self.old_refresh = self.client.cookies[
+            settings.JWT_REFRESH_COOKIE_NAME
+        ].value
+
+    def refresh(self):
+        return self.client.post(
+            self.refresh_url,
+            {},
+            format="json",
+            HTTP_X_CSRFTOKEN=self.csrf_token,
+        )
+
+    def test_refresh_replaces_cookies(self):
+        response = self.refresh()
+
+        self.assertEqual(response.status_code, 200)
+
+        access = response.cookies[settings.JWT_ACCESS_COOKIE_NAME]
+        refresh = response.cookies[settings.JWT_REFRESH_COOKIE_NAME]
+
+        self.assertTrue(access["httponly"])
+        self.assertTrue(refresh["httponly"])
+        self.assertNotEqual(refresh.value, self.old_refresh)
+
+        body = response.content.decode()
+        self.assertNotIn(access.value, body)
+        self.assertNotIn(refresh.value, body)
+
+        profile = self.client.get(reverse("users:me"))
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data["id"], self.user.id)
+
+    def test_old_refresh_cannot_be_reused(self):
+        response = self.refresh()
+        self.assertEqual(response.status_code, 200)
+
+        self.client.cookies[
+            settings.JWT_REFRESH_COOKIE_NAME
+        ] = self.old_refresh
+
+        response = self.refresh()
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(
+            settings.JWT_ACCESS_COOKIE_NAME,
+            response.cookies,
+        )
+        self.assertNotIn(
+            settings.JWT_REFRESH_COOKIE_NAME,
+            response.cookies,
+        )
+
+    def test_refresh_without_access_cookie_succeeds(self):
+        del self.client.cookies[settings.JWT_ACCESS_COOKIE_NAME]
+
+        response = self.refresh()
+
+        self.assertEqual(response.status_code, 200)
+
+        profile = self.client.get(reverse("users:me"))
+        self.assertEqual(profile.status_code, 200)
+
+    def test_refresh_without_refresh_cookie_is_rejected(self):
+        del self.client.cookies[settings.JWT_REFRESH_COOKIE_NAME]
+
+        response = self.refresh()
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_refresh_without_csrf_header_is_rejected(self):
+        response = self.client.post(
+            self.refresh_url,
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        # La tentative refusée ne doit pas consommer le refresh token.
+        valid_response = self.refresh()
+        self.assertEqual(valid_response.status_code, 200)
+
+class LogoutTests(APITestCase):
+    def setUp(self):
+        self.client = APIClient(enforce_csrf_checks=True)
+
+        self.password = "Test-Uniquement!48-Rivage"
+        self.user = User.objects.create_user(
+            username="logout_test",
+            email="logout@example.com",
+            password=self.password,
+        )
+
+        self.logout_url = reverse("users:logout")
+        self.refresh_url = reverse("users:refresh")
+        self.me_url = reverse("users:me")
+
+        csrf_response = self.client.get(reverse("users:csrf"))
+        csrf_token = csrf_response.json()["csrfToken"]
+
+        login_response = self.client.post(
+            reverse("users:login"),
+            {
+                "email": self.user.email,
+                "password": self.password,
+            },
+            format="json",
+            HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+        self.assertEqual(login_response.status_code, 200)
+
+        self.csrf_token = login_response.data["csrfToken"]
+        self.old_refresh = self.client.cookies[
+            settings.JWT_REFRESH_COOKIE_NAME
+        ].value
+
+    def logout(self):
+        return self.client.post(
+            self.logout_url,
+            {},
+            format="json",
+            HTTP_X_CSRFTOKEN=self.csrf_token,
+        )
+
+    def test_logout_clears_cookies_and_blocks_profile(self):
+        response = self.logout()
+
+        self.assertEqual(response.status_code, 200)
+
+        expected_paths = {
+            settings.JWT_ACCESS_COOKIE_NAME: "/api/",
+            settings.JWT_REFRESH_COOKIE_NAME: "/api/users/",
+        }
+
+        for name, path in expected_paths.items():
+            cookie = response.cookies[name]
+            self.assertEqual(cookie.value, "")
+            self.assertEqual(cookie["max-age"], 0)
+            self.assertEqual(cookie["path"], path)
+
+        profile = self.client.get(self.me_url)
+        self.assertEqual(profile.status_code, 401)
+
+    def test_logout_revokes_refresh_token(self):
+        response = self.logout()
+        self.assertEqual(response.status_code, 200)
+
+        # On essaie de réutiliser le jeton conservé avant la déconnexion.
+        self.client.cookies[
+            settings.JWT_REFRESH_COOKIE_NAME
+        ] = self.old_refresh
+
+        response = self.client.post(
+            self.refresh_url,
+            {},
+            format="json",
+            HTTP_X_CSRFTOKEN=self.csrf_token,
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(
+            settings.JWT_ACCESS_COOKIE_NAME,
+            response.cookies,
+        )
+
+    def test_logout_without_csrf_is_rejected(self):
+        response = self.client.post(
+            self.logout_url,
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        # La tentative refusée ne doit pas déconnecter le client.
+        profile = self.client.get(self.me_url)
+        self.assertEqual(profile.status_code, 200)
+
+    def test_logout_without_access_cookie_succeeds(self):
+        del self.client.cookies[settings.JWT_ACCESS_COOKIE_NAME]
+
+        response = self.logout()
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_logout_can_be_repeated(self):
+        first_response = self.logout()
+        second_response = self.logout()
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)

@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
@@ -13,11 +15,12 @@ from django.views.decorators.http import require_GET
 from django.middleware.csrf import get_token, rotate_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
+from django.conf import settings
 
 from .serializers import RegisterSerializer
 from .serializers import LoginSerializer
 from .authentication import CookieJWTAuthentication
-from .cookies import set_auth_cookies
+from .cookies import clear_auth_cookies, set_auth_cookies
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
@@ -78,3 +81,66 @@ class MeView(APIView):
             "last_name": user.last_name,
             "role": user.role,
         })
+
+
+@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(never_cache, name="dispatch")
+class CookieRefreshView(TokenRefreshView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.COOKIES.get(
+            settings.JWT_REFRESH_COOKIE_NAME
+        )
+
+        if not refresh_token:
+            raise InvalidToken("Cookie de renouvellement absent.")
+
+        serializer = self.get_serializer(
+            data={"refresh": refresh_token}
+        )
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as error:
+            raise InvalidToken(
+                "Jeton de renouvellement invalide ou expiré."
+            ) from error
+
+        tokens = serializer.validated_data
+
+        response = Response({
+            "message": "Connexion renouvelée.",
+        })
+
+        return set_auth_cookies(
+            response,
+            tokens["access"],
+            tokens["refresh"],
+        )
+
+@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(never_cache, name="dispatch")
+class LogoutView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get(
+            settings.JWT_REFRESH_COOKIE_NAME
+        )
+
+        if refresh_token:
+            try:
+                RefreshToken(refresh_token).blacklist()
+            except TokenError:
+                # Un jeton déjà inutilisable n'empêche pas
+                # la suppression des cookies.
+                pass
+
+        response = Response({
+            "message": "Déconnexion réussie.",
+        })
+
+        return clear_auth_cookies(response)
