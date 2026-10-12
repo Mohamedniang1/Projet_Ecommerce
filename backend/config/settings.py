@@ -45,6 +45,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
     'users',
+    'catalog',
+    'orders',
 ]
 
 MIDDLEWARE = [
@@ -150,8 +152,47 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
 }
 
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "DJANGO_CSRF_TRUSTED_ORIGINS", ""
+    ).split(",")
+    if origin.strip()
+]
+
+# E-mails affichés dans les logs en développement.
+if DEBUG:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+DEFAULT_FROM_EMAIL = "KeurMayata <noreply@example.com>"
+
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL",
+    "http://localhost:3000",
+).rstrip("/")
+
+# Durée de validité du lien : 30 minutes.
+PASSWORD_RESET_TIMEOUT = 30 * 60
+
 JWT_ACCESS_COOKIE_NAME = "keurmayata_access"
 JWT_REFRESH_COOKIE_NAME = "keurmayata_refresh"
 
 JWT_COOKIE_SECURE = not DEBUG
 JWT_COOKIE_SAMESITE = "Lax"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+# Coordonnées publiques de réception. Le paiement reste désactivé pendant les tests.
+MANUAL_PAYMENTS_ENABLED = os.environ.get("MANUAL_PAYMENTS_ENABLED", "false").lower() == "true"
+MANUAL_PAYMENTS_TEST_MODE = os.environ.get("MANUAL_PAYMENTS_TEST_MODE", "true").lower() == "true"
+MANUAL_PAYMENT_RECIPIENTS = {
+    "wave": {
+        "phone": os.environ.get("PAYMENT_WAVE_PHONE", "").strip(),
+        "name": os.environ.get("PAYMENT_WAVE_NAME", "").strip(),
+    },
+    "orange_money": {
+        "phone": os.environ.get("PAYMENT_ORANGE_MONEY_PHONE", "").strip(),
+        "name": os.environ.get("PAYMENT_ORANGE_MONEY_NAME", "").strip(),
+    },
+}

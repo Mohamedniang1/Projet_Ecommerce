@@ -47,7 +47,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             role=User.Role.CLIENT,
             **validated_data,
         )
-
+    
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
@@ -55,6 +55,11 @@ class LoginSerializer(serializers.Serializer):
         write_only=True,
         trim_whitespace=False,
         style={"input_type": "password"},
+    )
+
+    remember = serializers.BooleanField(
+        default=False,
+        write_only=True,
     )
 
     def validate(self, attrs):
@@ -71,4 +76,44 @@ class LoginSerializer(serializers.Serializer):
                 "Adresse e-mail ou mot de passe incorrect."
             )
 
-        return {"user": user}
+        return {
+            "user": user,
+            "remember": attrs["remember"],
+        }
+
+class ProfileSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+        )
+        read_only_fields = ("id", "email", "role")
+
+    def validate(self, attrs):
+        forbidden_fields = set(self.initial_data) - {
+            "first_name",
+            "last_name",
+        }
+
+        if forbidden_fields:
+            raise serializers.ValidationError(
+                "Seuls le prénom et le nom peuvent être modifiés."
+            )
+
+        return attrs
+

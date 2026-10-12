@@ -1,13 +1,32 @@
 from django.conf import settings
 
 
-def set_auth_cookies(response, access_token, refresh_token):
+def set_auth_cookies(
+    response,
+    access_token,
+    refresh_token,
+    *,
+    remember=False,
+):
+    access_max_age = None
+    refresh_max_age = None
+
+    if remember:
+        access_max_age = int(
+            settings.SIMPLE_JWT[
+                "ACCESS_TOKEN_LIFETIME"
+            ].total_seconds()
+        )
+        refresh_max_age = int(
+            settings.SIMPLE_JWT[
+                "REFRESH_TOKEN_LIFETIME"
+            ].total_seconds()
+        )
+
     response.set_cookie(
         key=settings.JWT_ACCESS_COOKIE_NAME,
         value=str(access_token),
-        max_age=int(
-            settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds()
-        ),
+        max_age=access_max_age,
         httponly=True,
         secure=settings.JWT_COOKIE_SECURE,
         samesite=settings.JWT_COOKIE_SAMESITE,
@@ -17,15 +36,15 @@ def set_auth_cookies(response, access_token, refresh_token):
     response.set_cookie(
         key=settings.JWT_REFRESH_COOKIE_NAME,
         value=str(refresh_token),
-        max_age=int(
-            settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()
-        ),
+        max_age=refresh_max_age,
         httponly=True,
         secure=settings.JWT_COOKIE_SECURE,
         samesite=settings.JWT_COOKIE_SAMESITE,
         path="/api/users/",
     )
+
     return response
+
 
 def clear_auth_cookies(response):
     response.delete_cookie(
