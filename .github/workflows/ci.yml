@@ -38,3 +38,60 @@ jobs:
 
       - name: Construire le frontend
         run: npm run build
+        
+  backend:
+    name: Tester le backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: keurmayata_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - "127.0.0.1:5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres -d keurmayata_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DJANGO_SECRET_KEY: "test-only-test-only-test-only-test-only-test-only"
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,testserver"
+      POSTGRES_DB: keurmayata_ci
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: "127.0.0.1"
+      POSTGRES_PORT: "5432"
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Preparer Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dependances
+        run: python -m pip install -r requirements.txt
+
+      - name: Verifier la configuration Django
+        run: python manage.py check
+
+      - name: Verifier les migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Executer les tests
+        run: python manage.py test --noinput -v 2
